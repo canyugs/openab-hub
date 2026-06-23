@@ -78,6 +78,14 @@ impl Db {
                 token TEXT NOT NULL
             );
         ")?;
+        // Idempotent migrations for DBs created before these columns existed.
+        // SQLite has no "ADD COLUMN IF NOT EXISTS"; ignore the duplicate-column error.
+        for stmt in [
+            "ALTER TABLE channels ADD COLUMN owner_id INTEGER",
+            "ALTER TABLE channels ADD COLUMN source_message_id INTEGER",
+        ] {
+            let _ = conn.execute(stmt, []);
+        }
         Ok(Self { conn: Mutex::new(conn) })
     }
 
