@@ -126,6 +126,11 @@ fn message_to_json(msg: &db::Message, state: &AppState) -> Value {
             "channel_id": msg.channel_id.to_string()
         });
     }
+    // If a thread was started from this message, embed it — OpenAB reads
+    // `message.thread` to recover after the one-thread-per-message (160004) error.
+    if let Some(thread) = state.db.get_thread_by_source_message(msg.id) {
+        j["thread"] = channel_to_json(&thread);
+    }
     j
 }
 
@@ -279,6 +284,21 @@ fn channel_to_json(ch: &db::Channel) -> Value {
     if let Some(pid) = ch.parent_id {
         j["parent_id"] = json!(pid.to_string());
     }
+    // Threads (type 11) carry thread_metadata + owner_id — this is how serenity
+    // (and OpenAB's detect_thread) recognize a channel as a thread. Without it,
+    // a bot replying in a thread thinks it's a top-level channel and creates a
+    // nested thread, matching Discord behavior exactly.
+    if ch.channel_type == 11 {
+        j["thread_metadata"] = json!({
+            "archived": false,
+            "auto_archive_duration": 1440,
+            "archive_timestamp": null,
+            "locked": false
+        });
+        if let Some(oid) = ch.owner_id {
+            j["owner_id"] = json!(oid.to_string());
+        }
+    }
     j
 }
 
@@ -308,18 +328,32 @@ struct CreateThreadBody {
 
 async fn create_thread(
     State(state): State<Arc<AppState>>,
-    Path((channel_id, _message_id)): Path<(u64, u64)>,
+    headers: HeaderMap,
+    Path((channel_id, message_id)): Path<(u64, u64)>,
     Json(body): Json<CreateThreadBody>,
 ) -> impl IntoResponse {
+    // Discord rule: one thread per message. A second create from the same
+    // message returns error 160004 — OpenAB catches it and joins the existing
+    // thread (the multi-bot race resolves to a single shared thread).
+    if state.db.get_thread_by_source_message(message_id).is_some() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"code": 160004, "message": "A thread has already been created for this message"})),
+        );
+    }
+
     let guild_id = state.db.get_guild_id().unwrap_or(1);
+    let owner_id = extract_bot_from_header(&headers, &state).map(|b| b.user_id);
     let thread_id = snowflake::generate();
-    state.db.create_channel(thread_id, guild_id, &body.name, 11, Some(channel_id));
+    state.db.create_channel(thread_id, guild_id, &body.name, 11, Some(channel_id), owner_id, Some(message_id));
     let ch = db::Channel {
         id: thread_id,
         guild_id,
         name: body.name,
         channel_type: 11,
         parent_id: Some(channel_id),
+        owner_id,
+        source_message_id: Some(message_id),
     };
     (StatusCode::OK, Json(channel_to_json(&ch)))
 }

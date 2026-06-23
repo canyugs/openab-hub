@@ -26,6 +26,10 @@ pub struct Channel {
     #[serde(rename = "type")]
     pub channel_type: i64,
     pub parent_id: Option<u64>,
+    /// Bot that created the thread (None for non-threads).
+    pub owner_id: Option<u64>,
+    /// Message this thread was created from (None for non-threads).
+    pub source_message_id: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,7 +52,9 @@ impl Db {
                 guild_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
                 type INTEGER NOT NULL DEFAULT 0,
-                parent_id INTEGER
+                parent_id INTEGER,
+                owner_id INTEGER,
+                source_message_id INTEGER
             );
             CREATE TABLE IF NOT EXISTS messages (
                 id INTEGER PRIMARY KEY,
@@ -96,6 +102,25 @@ impl Db {
         conn.execute(
             "INSERT OR REPLACE INTO bots (user_id, username, token) VALUES (?1, ?2, ?3)",
             params![user_id as i64, username, token],
+        ).ok();
+    }
+
+    /// Pre-seed a bot identity (id → display name) without a token. The token is
+    /// filled in later on IDENTIFY. Keeps the friendly name even if the bot
+    /// auto-registers. No-op if the bot already exists.
+    pub fn seed_bot(&self, user_id: u64, username: &str) {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR IGNORE INTO bots (user_id, username, token) VALUES (?1, ?2, '')",
+            params![user_id as i64, username],
+        ).ok();
+    }
+
+    pub fn set_bot_token(&self, user_id: u64, token: &str) {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE bots SET token = ?1 WHERE user_id = ?2",
+            params![token, user_id as i64],
         ).ok();
     }
 
@@ -193,24 +218,29 @@ impl Db {
     pub fn get_channel(&self, id: u64) -> Option<Channel> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
-            "SELECT id, guild_id, name, type, parent_id FROM channels WHERE id = ?1",
+            "SELECT id, guild_id, name, type, parent_id, owner_id, source_message_id FROM channels WHERE id = ?1",
             params![id as i64],
-            |row| Ok(Channel {
-                id: row.get::<_, i64>(0)? as u64,
-                guild_id: row.get::<_, i64>(1)? as u64,
-                name: row.get(2)?,
-                channel_type: row.get(3)?,
-                parent_id: row.get::<_, Option<i64>>(4)?.map(|v| v as u64),
-            }),
+            row_to_channel,
         ).ok()
     }
 
-    pub fn create_channel(&self, id: u64, guild_id: u64, name: &str, channel_type: i64, parent_id: Option<u64>) {
+    pub fn create_channel(&self, id: u64, guild_id: u64, name: &str, channel_type: i64, parent_id: Option<u64>, owner_id: Option<u64>, source_message_id: Option<u64>) {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO channels (id, guild_id, name, type, parent_id) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![id as i64, guild_id as i64, name, channel_type, parent_id.map(|v| v as i64)],
+            "INSERT INTO channels (id, guild_id, name, type, parent_id, owner_id, source_message_id) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id as i64, guild_id as i64, name, channel_type, parent_id.map(|v| v as i64), owner_id.map(|v| v as i64), source_message_id.map(|v| v as i64)],
         ).ok();
+    }
+
+    /// Find an existing thread created from a given message (enforces Discord's
+    /// one-thread-per-message rule).
+    pub fn get_thread_by_source_message(&self, message_id: u64) -> Option<Channel> {
+        let conn = self.conn.lock().unwrap();
+        conn.query_row(
+            "SELECT id, guild_id, name, type, parent_id, owner_id, source_message_id FROM channels WHERE source_message_id = ?1",
+            params![message_id as i64],
+            row_to_channel,
+        ).ok()
     }
 
     pub fn rename_channel(&self, id: u64, name: &str) {
@@ -247,32 +277,30 @@ impl Db {
     pub fn get_channels_by_guild(&self, guild_id: u64) -> Vec<Channel> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, guild_id, name, type, parent_id FROM channels WHERE guild_id = ?1"
+            "SELECT id, guild_id, name, type, parent_id, owner_id, source_message_id FROM channels WHERE guild_id = ?1"
         ).unwrap();
-        stmt.query_map(params![guild_id as i64], |row| {
-            Ok(Channel {
-                id: row.get::<_, i64>(0)? as u64,
-                guild_id: row.get::<_, i64>(1)? as u64,
-                name: row.get(2)?,
-                channel_type: row.get(3)?,
-                parent_id: row.get::<_, Option<i64>>(4)?.map(|v| v as u64),
-            })
-        }).unwrap().filter_map(|r| r.ok()).collect()
+        stmt.query_map(params![guild_id as i64], row_to_channel)
+            .unwrap().filter_map(|r| r.ok()).collect()
     }
 
     pub fn get_threads(&self) -> Vec<Channel> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, guild_id, name, type, parent_id FROM channels WHERE type = 11 ORDER BY id DESC"
+            "SELECT id, guild_id, name, type, parent_id, owner_id, source_message_id FROM channels WHERE type = 11 ORDER BY id DESC"
         ).unwrap();
-        stmt.query_map([], |row| {
-            Ok(Channel {
-                id: row.get::<_, i64>(0)? as u64,
-                guild_id: row.get::<_, i64>(1)? as u64,
-                name: row.get(2)?,
-                channel_type: row.get(3)?,
-                parent_id: row.get::<_, Option<i64>>(4)?.map(|v| v as u64),
-            })
-        }).unwrap().filter_map(|r| r.ok()).collect()
+        stmt.query_map([], row_to_channel)
+            .unwrap().filter_map(|r| r.ok()).collect()
     }
+}
+
+fn row_to_channel(row: &rusqlite::Row) -> rusqlite::Result<Channel> {
+    Ok(Channel {
+        id: row.get::<_, i64>(0)? as u64,
+        guild_id: row.get::<_, i64>(1)? as u64,
+        name: row.get(2)?,
+        channel_type: row.get(3)?,
+        parent_id: row.get::<_, Option<i64>>(4)?.map(|v| v as u64),
+        owner_id: row.get::<_, Option<i64>>(5)?.map(|v| v as u64),
+        source_message_id: row.get::<_, Option<i64>>(6)?.map(|v| v as u64),
+    })
 }

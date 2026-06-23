@@ -195,8 +195,35 @@ async fn test_create_thread() {
     assert_eq!(thread["name"], "PR #42 review");
     assert_eq!(thread["type"], 11);
     assert_eq!(thread["parent_id"], CHANNEL_ID.to_string());
+    // thread_metadata + owner_id are what serenity/OpenAB use to recognize a thread
+    assert!(thread["thread_metadata"].is_object(), "thread must carry thread_metadata");
+    assert_eq!(thread["thread_metadata"]["archived"], false);
+    assert_eq!(thread["owner_id"], "12345");
+    let thread_id = thread["id"].as_str().unwrap().to_string();
 
-    // Verify thread appears in /threads
+    // GET the thread channel — must report type 11 + thread_metadata so a bot
+    // replying inside knows it's already in a thread (no nested thread).
+    let fetched: Value = client.get(format!("{base}/api/v10/channels/{thread_id}"))
+        .send().await.unwrap().json().await.unwrap();
+    assert_eq!(fetched["type"], 11);
+    assert!(fetched["thread_metadata"].is_object());
+
+    // One-thread-per-message: a second create from the same message → 160004.
+    let resp = client.post(format!("{base}/api/v10/channels/{CHANNEL_ID}/messages/{msg_id}/threads"))
+        .header("Authorization", format!("Bot {BOT_TOKEN}"))
+        .json(&json!({ "name": "duplicate" }))
+        .send().await.unwrap();
+    assert_eq!(resp.status(), 400);
+    let err: Value = resp.json().await.unwrap();
+    assert_eq!(err["code"], 160004);
+
+    // The trigger message now embeds its thread (used by OpenAB to recover).
+    let msgs: Vec<Value> = client.get(format!("{base}/api/v10/channels/{CHANNEL_ID}/messages"))
+        .send().await.unwrap().json().await.unwrap();
+    let trigger = msgs.iter().find(|m| m["id"] == msg_id).unwrap();
+    assert_eq!(trigger["thread"]["id"], thread_id);
+
+    // Verify thread appears in /threads (still just one)
     let threads: Vec<Value> = client.get(format!("{base}/threads"))
         .send().await.unwrap().json().await.unwrap();
     assert_eq!(threads.len(), 1);

@@ -188,6 +188,11 @@ async fn wait_for_identify(socket: &mut WebSocket, state: &AppState) -> Option<B
 
                                 // Decode user ID from token (base64 of user ID is first segment)
                                 if let Some(user_id) = decode_user_id_from_token(clean_token) {
+                                    // Keep a pre-seeded friendly name if one exists.
+                                    if let Some(bot) = state.db.get_bot(user_id) {
+                                        state.db.set_bot_token(user_id, clean_token);
+                                        return Some(bot);
+                                    }
                                     let username = format!("bot-{}", user_id);
                                     state.db.register_bot(user_id, &username, clean_token);
                                     return Some(Bot { user_id, username });

@@ -30,6 +30,17 @@ async fn main() {
         }
     }
 
+    // Pre-seed bot display names: HUB_BOTS="1001:Gandalf,1002:Aragorn"
+    if let Ok(bots) = env::var("HUB_BOTS") {
+        for pair in bots.split(',') {
+            if let Some((id_str, name)) = pair.split_once(':') {
+                if let Ok(id) = id_str.trim().parse::<u64>() {
+                    db.seed_bot(id, name.trim());
+                }
+            }
+        }
+    }
+
     let (event_tx, _) = broadcast::channel::<String>(256);
     let public_url = env::var("HUB_PUBLIC_URL").unwrap_or_else(|_| format!("ws://localhost:{}", listen.split(':').last().unwrap_or("8080")));
 
