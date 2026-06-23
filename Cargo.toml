@@ -14,6 +14,15 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 base64 = "0.22"
 tower-http = { version = "0.6", features = ["cors"] }
 
+[[bin]]
+name = "test-bot"
+path = "src/bin/test_bot.rs"
+
+[dependencies.serenity]
+version = "0.12"
+default-features = false
+features = ["client", "gateway", "model", "rustls_backend"]
+
 [dev-dependencies]
 tokio-tungstenite = "0.29"
 reqwest = { version = "0.12", features = ["json"] }

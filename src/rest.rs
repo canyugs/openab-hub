@@ -45,10 +45,12 @@ fn extract_bot_from_header(headers: &HeaderMap, state: &AppState) -> Option<db::
 fn message_to_json(msg: &db::Message, state: &AppState) -> Value {
     let bot_info = state.db.get_bot(msg.author_id);
     let username = bot_info.as_ref().map(|b| b.username.as_str()).unwrap_or(&msg.author_name);
+    let guild_id = state.db.get_guild_id().unwrap_or(1);
 
     let mut j = json!({
         "id": msg.id.to_string(),
         "channel_id": msg.channel_id.to_string(),
+        "guild_id": guild_id.to_string(),
         "content": msg.content,
         "timestamp": msg.timestamp,
         "edited_timestamp": null,
