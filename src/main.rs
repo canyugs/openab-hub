@@ -1,17 +1,8 @@
-mod db;
-mod gateway;
-mod rest;
-mod snowflake;
-
 use std::{env, sync::Arc};
 use tokio::sync::broadcast;
 use tracing_subscriber::EnvFilter;
 
-pub struct AppState {
-    pub db: db::Db,
-    pub event_tx: broadcast::Sender<String>,
-    pub gateway_url: String,
-}
+use openab_hub::{db, AppState, build_app};
 
 #[tokio::main]
 async fn main() {
@@ -48,7 +39,7 @@ async fn main() {
         gateway_url: format!("{}/gateway", public_url),
     });
 
-    let app = rest::router(state.clone()).merge(gateway::router(state.clone()));
+    let app = build_app(state);
 
     let listener = tokio::net::TcpListener::bind(&listen).await.expect("failed to bind");
     tracing::info!("listening on {listen}");
