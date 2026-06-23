@@ -13,5 +13,20 @@ pub struct AppState {
 }
 
 pub fn build_app(state: Arc<AppState>) -> axum::Router {
-    rest::router(state.clone()).merge(gateway::router(state))
+    let app = rest::router(state.clone()).merge(gateway::router(state));
+    // Opt-in access log: HUB_ACCESS_LOG=1 logs every REST method+path. Handy for
+    // verifying exactly which Discord endpoints a connected bot exercises.
+    if std::env::var("HUB_ACCESS_LOG").is_ok() {
+        app.layer(axum::middleware::from_fn(access_log))
+    } else {
+        app
+    }
+}
+
+async fn access_log(req: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+    let resp = next.run(req).await;
+    tracing::info!(%method, path, status = resp.status().as_u16(), "request");
+    resp
 }
