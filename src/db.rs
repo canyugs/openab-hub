@@ -244,6 +244,22 @@ impl Db {
         }).ok()
     }
 
+    pub fn get_channels_by_guild(&self, guild_id: u64) -> Vec<Channel> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, guild_id, name, type, parent_id FROM channels WHERE guild_id = ?1"
+        ).unwrap();
+        stmt.query_map(params![guild_id as i64], |row| {
+            Ok(Channel {
+                id: row.get::<_, i64>(0)? as u64,
+                guild_id: row.get::<_, i64>(1)? as u64,
+                name: row.get(2)?,
+                channel_type: row.get(3)?,
+                parent_id: row.get::<_, Option<i64>>(4)?.map(|v| v as u64),
+            })
+        }).unwrap().filter_map(|r| r.ok()).collect()
+    }
+
     pub fn get_threads(&self) -> Vec<Channel> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(

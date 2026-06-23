@@ -49,7 +49,7 @@ async fn handle_connection(mut socket: WebSocket, state: Arc<AppState>) {
             "user": {
                 "id": bot.user_id.to_string(),
                 "username": bot.username,
-                "discriminator": "0000",
+                "global_name": bot.username,
                 "bot": true,
                 "avatar": null
             },
@@ -63,9 +63,54 @@ async fn handle_connection(mut socket: WebSocket, state: Arc<AppState>) {
         return;
     }
 
+    // Step 3.5: Send GUILD_CREATE (serenity needs this before dispatching guild events)
+    let channels = state.db.get_channels_by_guild(guild_id);
+    let channels_json: Vec<serde_json::Value> = channels.iter().map(|ch| {
+        json!({
+            "id": ch.id.to_string(),
+            "name": ch.name,
+            "type": ch.channel_type,
+            "position": 0,
+            "permission_overwrites": [],
+            "parent_id": ch.parent_id.map(|id| id.to_string()),
+        })
+    }).collect();
+
+    let guild_create = json!({
+        "op": 0,
+        "s": 2,
+        "t": "GUILD_CREATE",
+        "d": {
+            "id": guild_id.to_string(),
+            "name": "openab-hub",
+            "owner_id": bot.user_id.to_string(),
+            "channels": channels_json,
+            "members": [],
+            "roles": [{
+                "id": guild_id.to_string(),
+                "name": "@everyone",
+                "permissions": "2147483647",
+                "position": 0,
+                "color": 0,
+                "hoist": false,
+                "managed": false,
+                "mentionable": false
+            }],
+            "presences": [],
+            "threads": [],
+            "voice_states": [],
+            "emojis": [],
+            "features": [],
+            "unavailable": false
+        }
+    });
+    if send_json(&mut socket, &guild_create).await.is_err() {
+        return;
+    }
+
     // Step 4: Event loop — forward broadcasts + handle heartbeats
     let mut event_rx = state.event_tx.subscribe();
-    let mut seq: u64 = 2;
+    let mut seq: u64 = 3;
 
     loop {
         tokio::select! {

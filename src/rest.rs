@@ -65,7 +65,7 @@ fn message_to_json(msg: &db::Message, state: &AppState) -> Value {
         "author": {
             "id": msg.author_id.to_string(),
             "username": username,
-            "discriminator": "0000",
+            "global_name": username,
             "avatar": null,
             "bot": msg.is_bot
         }
@@ -315,7 +315,11 @@ struct WebhookBody {
     channel_id: u64,
     content: String,
     username: Option<String>,
+    author_id: Option<u64>,
 }
+
+// Stable webhook author ID (non-zero, won't collide with bot snowflakes)
+const WEBHOOK_AUTHOR_ID: u64 = 1;
 
 async fn github_webhook(
     State(state): State<Arc<AppState>>,
@@ -325,7 +329,7 @@ async fn github_webhook(
     let msg = db::Message {
         id: msg_id,
         channel_id: body.channel_id,
-        author_id: 0,
+        author_id: body.author_id.unwrap_or(WEBHOOK_AUTHOR_ID),
         author_name: body.username.unwrap_or_else(|| "github".into()),
         is_bot: false,
         content: body.content,

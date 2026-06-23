@@ -60,6 +60,11 @@ async fn ws_identify(base: &str, token: &str) -> (futures_util::stream::SplitSin
     assert_eq!(ready["t"], "READY");
     assert_eq!(ready["d"]["user"]["bot"], true);
 
+    // Expect GUILD_CREATE
+    let guild = read.next().await.unwrap().unwrap();
+    let guild: Value = serde_json::from_str(guild.to_text().unwrap()).unwrap();
+    assert_eq!(guild["t"], "GUILD_CREATE");
+
     (write, read)
 }
 

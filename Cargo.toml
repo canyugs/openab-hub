@@ -18,6 +18,10 @@ tower-http = { version = "0.6", features = ["cors"] }
 name = "test-bot"
 path = "src/bin/test_bot.rs"
 
+[[bin]]
+name = "deser-test"
+path = "src/bin/deser_test.rs"
+
 [dependencies.serenity]
 version = "0.12"
 default-features = false
