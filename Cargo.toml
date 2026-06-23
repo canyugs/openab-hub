@@ -14,20 +14,11 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 base64 = "0.22"
 tower-http = { version = "0.6", features = ["cors"] }
 
-[[bin]]
-name = "test-bot"
-path = "src/bin/test_bot.rs"
-
-[[bin]]
-name = "deser-test"
-path = "src/bin/deser_test.rs"
-
-[dependencies.serenity]
-version = "0.12"
-default-features = false
-features = ["client", "gateway", "model", "rustls_backend"]
-
+# Diagnostic examples (test-bot, proxy-probe, deser-test) verify Discord
+# compatibility against a real serenity client. The production hub binary does
+# not depend on serenity/reqwest — they live in dev-dependencies only.
 [dev-dependencies]
 tokio-tungstenite = "0.29"
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 futures-util = "0.3"
+serenity = { version = "0.12", default-features = false, features = ["client", "gateway", "model", "rustls_backend"] }

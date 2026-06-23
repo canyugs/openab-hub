@@ -28,6 +28,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v10/channels/{channel_id}/messages/{message_id}/reactions/{emoji}/@me", put(add_reaction))
         .route("/api/v10/channels/{channel_id}/messages/{message_id}/reactions/{emoji}/@me", delete(remove_reaction))
         .route("/api/v10/applications/{app_id}/commands", put(register_commands))
+        .route("/api/v10/applications/{app_id}/commands", get(register_commands))
+        .route("/api/v10/applications/{app_id}/guilds/{guild_id}/commands", put(register_guild_commands))
+        .route("/api/v10/applications/{app_id}/guilds/{guild_id}/commands", get(register_guild_commands))
         // Non-Discord endpoints
         .route("/webhook", post(github_webhook))
         .route("/threads", get(list_threads))
@@ -42,10 +45,57 @@ fn extract_bot_from_header(headers: &HeaderMap, state: &AppState) -> Option<db::
     state.db.get_bot_by_token(token)
 }
 
+/// Parse Discord mention tokens from content, mirroring what Discord's API does
+/// server-side: `<@id>`/`<@!id>` → user mentions, `<@&id>` → role mentions.
+/// Returns (user_ids, role_ids).
+fn parse_mentions(content: &str) -> (Vec<u64>, Vec<u64>) {
+    let mut users = Vec::new();
+    let mut roles = Vec::new();
+    let bytes = content.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'<' && i + 1 < bytes.len() && bytes[i + 1] == b'@' {
+            let mut j = i + 2;
+            let is_role = j < bytes.len() && bytes[j] == b'&';
+            if is_role {
+                j += 1;
+            } else if j < bytes.len() && bytes[j] == b'!' {
+                j += 1; // <@!id> nickname mention
+            }
+            let start = j;
+            while j < bytes.len() && bytes[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > start && j < bytes.len() && bytes[j] == b'>' {
+                if let Ok(id) = content[start..j].parse::<u64>() {
+                    if is_role { roles.push(id) } else { users.push(id) }
+                }
+                i = j + 1;
+                continue;
+            }
+        }
+        i += 1;
+    }
+    (users, roles)
+}
+
 fn message_to_json(msg: &db::Message, state: &AppState) -> Value {
     let bot_info = state.db.get_bot(msg.author_id);
     let username = bot_info.as_ref().map(|b| b.username.as_str()).unwrap_or(&msg.author_name);
     let guild_id = state.db.get_guild_id().unwrap_or(1);
+
+    let (mention_users, mention_roles) = parse_mentions(&msg.content);
+    let mentions_json: Vec<Value> = mention_users.iter().map(|uid| {
+        let name = state.db.get_bot(*uid).map(|b| b.username).unwrap_or_else(|| format!("user-{uid}"));
+        json!({
+            "id": uid.to_string(),
+            "username": name,
+            "global_name": name,
+            "avatar": null,
+            "bot": state.db.get_bot(*uid).is_some()
+        })
+    }).collect();
+    let mention_roles_json: Vec<String> = mention_roles.iter().map(|r| r.to_string()).collect();
 
     let mut j = json!({
         "id": msg.id.to_string(),
@@ -56,8 +106,8 @@ fn message_to_json(msg: &db::Message, state: &AppState) -> Value {
         "edited_timestamp": null,
         "tts": false,
         "mention_everyone": false,
-        "mentions": [],
-        "mention_roles": [],
+        "mentions": mentions_json,
+        "mention_roles": mention_roles_json,
         "attachments": [],
         "embeds": [],
         "pinned": false,
@@ -300,11 +350,14 @@ async fn remove_reaction(
     StatusCode::NO_CONTENT
 }
 
-async fn register_commands(
-    Path(_app_id): Path<u64>,
-    Json(_body): Json<Value>,
-) -> Json<Value> {
-    // No-op: return empty command list
+// No-op: accept any command registration, always report empty command set.
+// Body is ignored (GET has none, PUT sends an array). Returning `[]` keeps
+// serenity happy — it decodes a valid JSON array instead of an empty body.
+async fn register_commands(Path(_app_id): Path<u64>) -> Json<Value> {
+    Json(json!([]))
+}
+
+async fn register_guild_commands(Path((_app_id, _guild_id)): Path<(u64, u64)>) -> Json<Value> {
     Json(json!([]))
 }
 
@@ -408,4 +461,19 @@ fn days_to_date(days: u64) -> (u64, u64, u64) {
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     let y = if m <= 2 { y + 1 } else { y };
     (y, m, d)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_mentions;
+
+    #[test]
+    fn mentions_parse() {
+        assert_eq!(parse_mentions("<@12345> hi"), (vec![12345], vec![]));
+        assert_eq!(parse_mentions("<@!999> yo"), (vec![999], vec![]));
+        assert_eq!(parse_mentions("ping <@&77> role"), (vec![], vec![77]));
+        assert_eq!(parse_mentions("<@1> and <@&2> and <@3>"), (vec![1, 3], vec![2]));
+        assert_eq!(parse_mentions("no mentions here"), (vec![], vec![]));
+        assert_eq!(parse_mentions("<@notanumber> <@>"), (vec![], vec![]));
+    }
 }
