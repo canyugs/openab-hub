@@ -36,7 +36,33 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/threads", get(list_threads))
         .route("/threads/{thread_id}", get(get_thread_messages))
         .route("/health", get(health))
+        // Serve an OpenAB bot config so bots can `-c http://hub/bot-config`
+        // instead of mounting/baking a file. Token stays an env placeholder.
+        .route("/bot-config", get(bot_config))
         .with_state(state)
+}
+
+async fn bot_config() -> impl IntoResponse {
+    let proxy = std::env::var("HUB_CONFIG_PROXY")
+        .unwrap_or_else(|_| "http://openab-hub.zeabur.internal:8080".into());
+    let toml = format!(
+        r#"[discord]
+bot_token = "${{DISCORD_BOT_TOKEN}}"
+proxy = "{proxy}"
+allow_all_channels = true
+allow_all_users = true
+allow_bot_messages = "mentions"
+
+[agent]
+command = "claude-agent-acp"
+working_dir = "/home/node"
+
+[pool]
+max_sessions = 1
+session_ttl_hours = 2
+"#
+    );
+    ([(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")], toml)
 }
 
 fn extract_bot_from_header(headers: &HeaderMap, state: &AppState) -> Option<db::Bot> {
