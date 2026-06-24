@@ -69,6 +69,7 @@ trusted_bot_ids = [{trusted}]
 [agent]
 command = "claude-agent-acp"
 working_dir = "/home/node"
+inherit_env = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
 
 [pool]
 max_sessions = 1
