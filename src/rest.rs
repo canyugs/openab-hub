@@ -73,7 +73,7 @@ working_dir = "/home/node"
 inherit_env = ["CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY"]
 
 [pool]
-max_sessions = 1
+max_sessions = 4
 session_ttl_hours = 2
 "#
     )
