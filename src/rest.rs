@@ -32,6 +32,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/api/v10/applications/{app_id}/guilds/{guild_id}/commands", put(register_guild_commands))
         .route("/api/v10/applications/{app_id}/guilds/{guild_id}/commands", get(register_guild_commands))
         // Non-Discord endpoints
+        .route("/", get(viewer))
         .route("/webhook", post(github_webhook))
         .route("/threads", get(list_threads))
         .route("/threads/{thread_id}", get(get_thread_messages))
@@ -497,6 +498,69 @@ struct ThreadSummary {
     name: String,
     parent_id: Option<String>,
 }
+
+/// Read-only public viewer: lists councils (threads) and renders the live
+/// conversation, polling /threads + /threads/{id}. Safe to expose externally.
+async fn viewer() -> impl IntoResponse {
+    ([(axum::http::header::CONTENT_TYPE, "text/html; charset=utf-8")], VIEWER_HTML)
+}
+
+const VIEWER_HTML: &str = r#"<!doctype html>
+<html lang="zh-Hant"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>openab-hub · 公審會 live</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:15px/1.6 -apple-system,Segoe UI,Roboto,"Noto Sans TC",sans-serif;
+    background:#0d1117; color:#e6edf3; }
+  header { padding:18px 24px; border-bottom:1px solid #21262d; position:sticky; top:0;
+    background:#0d1117ee; backdrop-filter:blur(6px); display:flex; align-items:center; gap:12px; }
+  header h1 { font-size:17px; margin:0; font-weight:600; }
+  header .dot { width:9px; height:9px; border-radius:50%; background:#3fb950; box-shadow:0 0 8px #3fb950; }
+  header .meta { color:#8b949e; font-size:13px; margin-left:auto; }
+  main { max-width:860px; margin:0 auto; padding:24px 16px 80px; }
+  .council { border:1px solid #21262d; border-radius:12px; margin-bottom:28px; overflow:hidden; }
+  .council > h2 { margin:0; padding:14px 18px; font-size:15px; background:#161b22;
+    border-bottom:1px solid #21262d; font-weight:600; }
+  .msg { padding:14px 18px; border-bottom:1px solid #161b22; }
+  .msg:last-child { border-bottom:0; }
+  .who { font-weight:600; font-size:13px; margin-bottom:4px; }
+  .who.bot { color:#79c0ff; } .who.human { color:#d2a8ff; }
+  .body { white-space:pre-wrap; word-break:break-word; color:#c9d1d9; }
+  .empty { color:#8b949e; text-align:center; padding:48px; }
+</style></head>
+<body>
+<header><span class="dot"></span><h1>openab-hub · 公審會 live</h1>
+  <span class="meta" id="meta">載入中…</span></header>
+<main id="root"><div class="empty">載入中…</div></main>
+<script>
+const root = document.getElementById('root'), meta = document.getElementById('meta');
+function esc(s){ return (s||'').replace(/[&<>]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])); }
+async function load(){
+  try {
+    const threads = await (await fetch('/threads')).json();
+    if(!threads.length){ root.innerHTML='<div class="empty">尚無公審會</div>'; meta.textContent='0 councils'; return; }
+    let html=''; let total=0;
+    for(const t of threads){
+      const msgs = await (await fetch('/threads/'+t.id)).json();
+      total += msgs.length;
+      html += '<section class="council"><h2>'+esc(t.name||('thread '+t.id))+'</h2>';
+      if(!msgs.length){ html+='<div class="msg"><div class="body" style="color:#8b949e">（等待發言…）</div></div>'; }
+      for(const m of msgs){
+        const bot = m.author && m.author.bot;
+        html += '<div class="msg"><div class="who '+(bot?'bot':'human')+'">'+
+          (bot?'🤖 ':'👤 ')+esc(m.author&&m.author.username)+'</div>'+
+          '<div class="body">'+esc(m.content)+'</div></div>';
+      }
+      html += '</section>';
+    }
+    root.innerHTML = html;
+    meta.textContent = threads.length+' councils · '+total+' messages';
+  } catch(e){ meta.textContent='連線錯誤'; }
+}
+load(); setInterval(load, 4000);
+</script></body></html>"#;
 
 async fn list_threads(State(state): State<Arc<AppState>>) -> Json<Vec<ThreadSummary>> {
     let threads = state.db.get_threads();
