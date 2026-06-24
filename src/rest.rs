@@ -388,6 +388,24 @@ struct CreateThreadBody {
     name: String,
 }
 
+/// Tidy an OpenAB-derived thread name (the trigger message text) into a short
+/// title: drop `<@id>` mentions, collapse whitespace, keep up to the first
+/// sentence-ender, cap length.
+fn clean_thread_name(raw: &str) -> String {
+    let (mentions, _) = parse_mentions(raw);
+    let mut s = raw.to_string();
+    for id in mentions {
+        for pat in [format!("<@{id}>"), format!("<@!{id}>"), format!("<@&{id}>")] {
+            s = s.replace(&pat, "");
+        }
+    }
+    let s: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let cut = s.find(['。', '？', '?', '!', '！']).map(|i| i + s[i..].chars().next().map_or(0, |c| c.len_utf8())).unwrap_or(s.len());
+    let head = s[..cut].trim().trim_end_matches(['。', '？', '?', '!', '！']).trim();
+    let title: String = head.chars().take(48).collect();
+    if title.is_empty() { "thread".into() } else { title }
+}
+
 async fn create_thread(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -407,11 +425,12 @@ async fn create_thread(
     let guild_id = state.db.get_guild_id().unwrap_or(1);
     let owner_id = extract_bot_from_header(&headers, &state).map(|b| b.user_id);
     let thread_id = snowflake::generate();
-    state.db.create_channel(thread_id, guild_id, &body.name, 11, Some(channel_id), owner_id, Some(message_id));
+    let name = clean_thread_name(&body.name);
+    state.db.create_channel(thread_id, guild_id, &name, 11, Some(channel_id), owner_id, Some(message_id));
     let ch = db::Channel {
         id: thread_id,
         guild_id,
-        name: body.name,
+        name,
         channel_type: 11,
         parent_id: Some(channel_id),
         owner_id,
@@ -624,7 +643,16 @@ fn days_to_date(days: u64) -> (u64, u64, u64) {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_mentions;
+    use super::{parse_mentions, clean_thread_name};
+
+    #[test]
+    fn thread_name_cleanup() {
+        assert_eq!(clean_thread_name("<@2001> 主席，議題：monorepo 還是 multi-repo？請開場"),
+                   "主席，議題：monorepo 還是 multi-repo");
+        assert_eq!(clean_thread_name("<@1> hi <@&2> there\nmore"), "hi there more");
+        assert_eq!(clean_thread_name("just a plain title"), "just a plain title");
+        assert!(clean_thread_name(&"x".repeat(100)).chars().count() <= 48);
+    }
 
     #[test]
     fn mentions_parse() {
