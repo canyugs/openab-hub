@@ -37,21 +37,34 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/threads/{thread_id}", get(get_thread_messages))
         .route("/health", get(health))
         // Serve an OpenAB bot config so bots can `-c http://hub/bot-config`
-        // instead of mounting/baking a file. Token stays an env placeholder.
+        // instead of mounting/baking a file.
+        //   /bot-config        → token via ${DISCORD_BOT_TOKEN} env placeholder
+        //   /bot-config/{id}    → fully self-contained: token derived from id,
+        //                         trusted_bot_ids auto-filled with every other
+        //                         registered bot (fleet-aware, no env needed)
         .route("/bot-config", get(bot_config))
+        .route("/bot-config/{id}", get(bot_config_for))
         .with_state(state)
 }
 
-async fn bot_config() -> impl IntoResponse {
-    let proxy = std::env::var("HUB_CONFIG_PROXY")
-        .unwrap_or_else(|_| "http://openab-hub.zeabur.internal:8080".into());
-    let toml = format!(
+fn hub_proxy() -> String {
+    std::env::var("HUB_CONFIG_PROXY")
+        .unwrap_or_else(|_| "http://openab-hub.zeabur.internal:8080".into())
+}
+
+fn render_config(bot_token: &str, proxy: &str, trusted_bot_ids: &[u64]) -> String {
+    let trusted = trusted_bot_ids.iter()
+        .map(|id| format!("\"{id}\""))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
         r#"[discord]
-bot_token = "${{DISCORD_BOT_TOKEN}}"
+bot_token = "{bot_token}"
 proxy = "{proxy}"
 allow_all_channels = true
 allow_all_users = true
 allow_bot_messages = "mentions"
+trusted_bot_ids = [{trusted}]
 
 [agent]
 command = "claude-agent-acp"
@@ -61,7 +74,28 @@ working_dir = "/home/node"
 max_sessions = 1
 session_ttl_hours = 2
 "#
+    )
+}
+
+async fn bot_config() -> impl IntoResponse {
+    let toml = render_config("${DISCORD_BOT_TOKEN}", &hub_proxy(), &[]);
+    ([(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")], toml)
+}
+
+async fn bot_config_for(
+    State(state): State<Arc<AppState>>,
+    Path(id): Path<u64>,
+) -> impl IntoResponse {
+    // Derive a hub token from the id (base64 of the id, same scheme the gateway
+    // decodes). No real secret — the hub model identifies bots by id.
+    use base64::Engine;
+    let token = format!(
+        "{}.hub.gen",
+        base64::engine::general_purpose::STANDARD_NO_PAD.encode(id.to_string())
     );
+    // Trust every other registered bot in the fleet.
+    let trusted: Vec<u64> = state.db.get_all_bot_ids().into_iter().filter(|b| *b != id).collect();
+    let toml = render_config(&token, &hub_proxy(), &trusted);
     ([(axum::http::header::CONTENT_TYPE, "text/plain; charset=utf-8")], toml)
 }
 

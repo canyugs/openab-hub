@@ -132,6 +132,13 @@ impl Db {
         ).ok();
     }
 
+    pub fn get_all_bot_ids(&self) -> Vec<u64> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT user_id FROM bots ORDER BY user_id").unwrap();
+        stmt.query_map([], |row| Ok(row.get::<_, i64>(0)? as u64))
+            .unwrap().filter_map(|r| r.ok()).collect()
+    }
+
     pub fn get_bot_by_token(&self, token: &str) -> Option<Bot> {
         let conn = self.conn.lock().unwrap();
         conn.query_row(
