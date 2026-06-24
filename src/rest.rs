@@ -61,6 +61,7 @@ fn render_config(bot_token: &str, proxy: &str, trusted_bot_ids: &[u64]) -> Strin
         r#"[discord]
 bot_token = "{bot_token}"
 proxy = "{proxy}"
+ratelimiter_disabled = true
 allow_all_channels = true
 allow_all_users = true
 allow_bot_messages = "mentions"
