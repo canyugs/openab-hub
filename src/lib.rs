@@ -13,6 +13,9 @@ pub struct AppState {
 }
 
 pub fn build_app(state: Arc<AppState>) -> axum::Router {
+    // No rate-limit headers needed: serenity only honours the proxy with its
+    // ratelimiter disabled, and the disabled path never reads response rate
+    // headers. OpenAB disables the limiter automatically when proxy is set.
     let app = rest::router(state.clone()).merge(gateway::router(state));
     // Opt-in access log: HUB_ACCESS_LOG=1 logs every REST method+path. Handy for
     // verifying exactly which Discord endpoints a connected bot exercises.

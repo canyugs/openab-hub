@@ -4,6 +4,8 @@ async fn main() {
     let proxy = std::env::var("HUB_PROXY").unwrap_or_else(|_| "http://127.0.0.1:19097".into());
     let token = "MTIzNDU.fake.token";
 
+    // ratelimiter MUST be disabled — serenity only applies the proxy on the
+    // ratelimiter-disabled path (the ratelimiter builds requests with proxy=None).
     let http = serenity::http::HttpBuilder::new(token)
         .proxy(&proxy)
         .ratelimiter_disabled(true)
