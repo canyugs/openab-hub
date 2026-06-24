@@ -392,9 +392,9 @@ struct CreateThreadBody {
 /// title: drop `<@id>` mentions, collapse whitespace, keep up to the first
 /// sentence-ender, cap length.
 fn clean_thread_name(raw: &str) -> String {
-    let (mentions, _) = parse_mentions(raw);
+    let (users, roles) = parse_mentions(raw);
     let mut s = raw.to_string();
-    for id in mentions {
+    for id in users.into_iter().chain(roles) {
         for pat in [format!("<@{id}>"), format!("<@!{id}>"), format!("<@&{id}>")] {
             s = s.replace(&pat, "");
         }
